@@ -39,6 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private var followPolicy = WindowFollowPolicy()
     private var hostGeometry = HostGeometryStability()
     private var frontmostScreen: CGRect?
+    private var focusDisplay = FocusDisplayTracker()
+    private var focusMouseMonitor: Any?
     private var forceHostDiscovery = true
     private var needsHostOrder = true
     private var stageManagerEnabled = false
@@ -107,6 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         logger.info("macOS widget launched")
     }
     func applicationWillTerminate(_ notification: Notification) {
+        if let focusMouseMonitor { NSEvent.removeMonitor(focusMouseMonitor) }
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         NotificationCenter.default.removeObserver(self)
         timer?.invalidate(); updater?.stop(); model?.stop(); speedStore.stop()
@@ -189,6 +192,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         speedWindow?.makeKeyAndOrderFront(nil)
     }
     private func observeWorkspace() {
+        recordFocusDisplay()
+        // Desktop clicks can switch Stage Manager sets without activating a
+        // different app. Mouse-only monitoring needs no keyboard/accessibility
+        // access and does not consume or alter the user's click.
+        focusMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
+            self?.recordFocusDisplay()
+        }
         let center = NSWorkspace.shared.notificationCenter
         center.addObserver(self, selector: #selector(spaceChanged(_:)), name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
         for name in [NSWorkspace.didActivateApplicationNotification, NSWorkspace.didDeactivateApplicationNotification,
@@ -197,6 +207,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             center.addObserver(self, selector: #selector(applicationChanged(_:)), name: name, object: nil)
         }
         NotificationCenter.default.addObserver(self, selector: #selector(spaceChanged(_:)), name: NSApplication.didChangeScreenParametersNotification, object: nil)
+    }
+    private func recordFocusDisplay() {
+        focusDisplay.recordInteraction(at: NSEvent.mouseLocation, screens: NSScreen.screens.map(\.frame))
+        forceHostDiscovery = true
     }
     private func readStageManager() {
         // Read the system setting; never change Stage Manager or the user's Spaces.
@@ -218,6 +232,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         updateWindow()
     }
     @objc private func applicationChanged(_ notification: Notification) {
+        if notification.name == NSWorkspace.didActivateApplicationNotification { recordFocusDisplay() }
         guard model.followCodex else { return }
         forceHostDiscovery = true; needsHostOrder = true
         readStageManager()
@@ -249,7 +264,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
               let windows = CGWindowListCopyWindowInfo(options, windowID) as? [[String: Any]] else { return nil }
         let screens = NSScreen.screens.map(\.frame)
         if discover {
-            frontmostScreen = nil
+            var frontmostFrame: CGRect?
             for window in windows {
                 guard (window[kCGWindowOwnerPID as String] as? Int32) == activeApp?.processIdentifier,
                       (window[kCGWindowLayer as String] as? Int) == 0,
@@ -257,10 +272,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                       let width = bounds["Width"], let height = bounds["Height"], width >= 200, height >= 120 else { continue }
                 let frame = WidgetPlacement.appKitRect(quartz: CGRect(x: bounds["X"] ?? 0, y: bounds["Y"] ?? 0,
                     width: width, height: height), mainDisplayHeight: CGDisplayBounds(CGMainDisplayID()).height)
-                if let screen = WindowFollowPolicy.screen(for: frame, screens: screens) {
-                    frontmostScreen = screen; break
+                if WindowFollowPolicy.screen(for: frame, screens: screens) != nil {
+                    frontmostFrame = frame; break
                 }
             }
+            frontmostScreen = focusDisplay.resolve(window: frontmostFrame, screens: screens)
         }
         for window in windows {
             guard (window[kCGWindowOwnerPID as String] as? Int32) == app.processIdentifier,
@@ -367,6 +383,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             let values: [String: Any] = ["visible": panel.isVisible, "followCodex": model.followCodex, "hostFound": host != nil,
                 "panelWindow": panel.windowNumber, "onActiveSpace": panel.isOnActiveSpace, "stageManager": stageManagerEnabled,
                 "geometryTransition": hostGeometry.transitioning, "windowLevel": panel.level.rawValue,
+                "focusScreen": frontmostScreen.map { NSStringFromRect($0) } ?? "",
                 "hostFrontmost": codexFrontmost, "collectionBehavior": panel.collectionBehavior.rawValue,
                 "hostWindow": host?.1 ?? 0, "frame": NSStringFromRect(panel.frame), "quotaOK": model.snapshot.ok,
                 "queryOK": model.snapshot.queryOk ?? false, "quotaWindowCount": model.snapshot.windows.count,

@@ -42,6 +42,25 @@ struct WindowFollowPolicy {
     }
 }
 
+/// A desktop click can activate Finder without an ordinary onscreen window.
+/// Keep the interaction's display as a fallback; pointer motion alone must not
+/// change which display is considered active.
+struct FocusDisplayTracker {
+    private var interactionScreen: CGRect?
+
+    mutating func recordInteraction(at point: CGPoint, screens: [CGRect]) {
+        interactionScreen = screens.first { $0.contains(point) }
+    }
+
+    func resolve(window: CGRect?, screens: [CGRect]) -> CGRect? {
+        if let window, let screen = WindowFollowPolicy.screen(for: window, screens: screens) {
+            return screen
+        }
+        // A disconnected or rearranged display must not remain the fallback.
+        return interactionScreen.flatMap { screens.contains($0) ? $0 : nil }
+    }
+}
+
 /// WindowServer reports animated Space positions as real coordinates, including
 /// positions on a neighbouring monitor. Follow a mouse drag immediately, but
 /// hide during other geometry transitions until the host stops moving.

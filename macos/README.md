@@ -90,6 +90,10 @@ full-screen Spaces. It stays above the active Codex window; when another app
 becomes active, it returns to normal window ordering. Switching to another app
 on the same display in Stage Manager hides it immediately. Activating an app on
 a different display keeps it with the still-visible Codex window.
+If that display's Stage Manager windows retract to reveal the desktop, Finder
+may have no ordinary visible window. In that case the companion uses the display
+of the last click or app activation, so the fullscreen companion on the other
+display remains visible. Moving the pointer alone does not change this fallback.
 
 Mouse dragging follows immediately. During other geometry changes, such as a
 full-screen Space swipe, the companion hides until the host is stable. A paused

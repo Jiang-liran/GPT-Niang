@@ -57,6 +57,28 @@ private enum WindowFollowRegression {
         expect(WindowFollowPolicy.screen(for: CGRect(x: 2000, y: 10, width: 1200, height: 800), screens: screens) == screens[1], "identify focus on external display")
         expect(WindowFollowPolicy.screen(for: CGRect(x: -1440, y: 0, width: 1000, height: 600), screens: screens) == screens[2], "identify portrait display")
 
+        // Reproduction: Codex stays fullscreen on display 0 while clicking the
+        // portrait display's desktop retracts its Stage Manager windows. Finder
+        // is active but has no ordinary windows in the onscreen window list.
+        var focus = FocusDisplayTracker()
+        expect(focus.resolve(window: nil, screens: screens) == nil, "unknown focus does not invent a display")
+        focus.recordInteraction(at: CGPoint(x: -1000, y: 500), screens: screens)
+        let desktopScreen = focus.resolve(window: nil, screens: screens)
+        expect(desktopScreen == screens[2], "windowless Finder retains the clicked desktop display")
+        expect(policy.mayFollow(stageManager: true, hostActive: false, companionActive: false,
+            frontmostOnAnotherScreen: desktopScreen != nil && desktopScreen != screens[0]),
+            "retracting another display's stage keeps the fullscreen companion visible")
+        expect(focus.resolve(window: nil, screens: screens) == screens[2], "repeated discovery retains desktop focus without another interaction")
+        expect(focus.resolve(window: screens[1], screens: screens) == screens[1], "known active window takes precedence over interaction fallback")
+        focus.recordInteraction(at: CGPoint(x: 800, y: 500), screens: screens)
+        let sameScreen = focus.resolve(window: nil, screens: screens)
+        expect(!policy.mayFollow(stageManager: true, hostActive: false, companionActive: false,
+            frontmostOnAnotherScreen: sameScreen != nil && sameScreen != screens[0]),
+            "another desktop click on host display still hides its retracted stage")
+        expect(focus.resolve(window: nil, screens: [screens[1], screens[2]]) == nil, "removed display is not retained as focus")
+        focus.recordInteraction(at: CGPoint(x: 9000, y: 9000), screens: screens)
+        expect(focus.resolve(window: nil, screens: screens) == nil, "out-of-display interaction clears fallback")
+
         var geometry = HostGeometryStability()
         let home = CGRect(x: 0, y: 0, width: 1728, height: 1084)
         func accept(_ frame: CGRect, _ now: TimeInterval, drag: Bool = false) -> Bool {
